@@ -1,1 +1,16 @@
-[]
+[
+    {
+        "module": "system_enum",
+        "args": {}
+    },
+    {
+        "module": "screenshot",
+        "args": {}
+    },
+    {
+        "module": "discovery",
+        "args": {
+            "ip_range": null
+        }
+    }
+]
