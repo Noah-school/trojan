@@ -1,6 +1,6 @@
 [
     {
-        "module": "ssh_harvester",
+        "module": "env_dump",
         "args": {}
     }
 ]
