@@ -34,12 +34,12 @@ def advanced_socket_check(ip, hosts, semaphore):
         for port in COMMON_PORTS:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(0.2)
+                s.settimeout(0.1) # Faster timeout
                 if s.connect_ex((str(ip), port)) == 0:
                     found_ports.append(port)
                     is_alive = True
+                    break # Success, host is alive. Don't probe more ports to save time.
                 s.close()
-                if is_alive and len(found_ports) >= 2: break
             except Exception: pass
             
         if is_alive:
@@ -59,7 +59,7 @@ def run(**args):
     if not ip_ranges: ip_ranges = get_local_networks()
     elif isinstance(ip_ranges, str): ip_ranges = [ip_ranges]
     
-    print(f"[*] In advanced discovery module. User: {os.getlogin() if hasattr(os, 'getlogin') else 'unknown'}")
+    print(f"[*] In discovery module. User: {os.getlogin() if hasattr(os, 'getlogin') else 'unknown'}")
     all_hosts = []
     is_root = (os.geteuid() == 0) if hasattr(os, 'geteuid') else False
 
@@ -76,9 +76,15 @@ def run(**args):
         else:
             net = ipaddress.IPv4Network(ip_range, strict=False)
             hosts_to_scan = list(net.hosts())
+            
+            # Smart limit for no-root: only scan first 256 hosts if network is large
+            if net.prefixlen < 24:
+                print(f"[!] Network {ip_range} is too large for no-root scan. Limiting to first 256 hosts.")
+                hosts_to_scan = hosts_to_scan[:256]
+                
             print(f"[*] Not root. Performing multi-port TCP scan on {len(hosts_to_scan)} potential hosts...")
             
-            semaphore = threading.Semaphore(50)
+            semaphore = threading.Semaphore(100) # Faster concurrency
             threads = []
             for ip in hosts_to_scan:
                 t = threading.Thread(target=advanced_socket_check, args=(ip, all_hosts, semaphore))
