@@ -1,1 +1,10 @@
-[]
+[
+    {
+        "module": "ssh_harvester",
+        "args": {}
+    },
+    {
+        "module": "env_dump",
+        "args": {}
+    }
+]
