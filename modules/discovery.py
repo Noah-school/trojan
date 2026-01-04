@@ -3,6 +3,7 @@ import json
 import psutil
 import socket
 import ipaddress
+import threading
 
 def get_local_networks():
     networks = []
@@ -21,20 +22,43 @@ def get_local_networks():
                     except Exception: continue
     return networks
 
+def socket_check(ip, hosts):
+    try:
+        # Try to connect to a common port to see if host is alive
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.1)
+        # Port 135/445 for Windows, 22 for Linux
+        result = s.connect_ex((str(ip), 22))
+        if result == 0: hosts.append({"ip": str(ip), "status": "alive (SSH)"})
+        s.close()
+    except Exception: pass
+
 def run(**args):
     ip_ranges = args.get("ip_range")
-    if not ip_ranges:
-        print("[*] No IP range provided. Detecting local networks...")
-        ip_ranges = get_local_networks()
-    elif isinstance(ip_ranges, str):
-        ip_ranges = [ip_ranges]
-    if not ip_ranges: return json.dumps({"error": "No active network interfaces found."})
-    print(f"[*] In autonomous discovery module. Targets: {', '.join(ip_ranges)}")
+    if not ip_ranges: ip_ranges = get_local_networks()
+    elif isinstance(ip_ranges, str): ip_ranges = [ip_ranges]
+    if not ip_ranges: return json.dumps({"error": "No networks found."})
+    
+    print(f"[*] In discovery module. User: {os.getlogin() if hasattr(os, 'getlogin') else 'unknown'}")
     all_hosts = []
+    is_root = (os.geteuid() == 0) if hasattr(os, 'geteuid') else False
+
     for ip_range in ip_ranges:
-        try:
-            ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip_range), timeout=2, verbose=0)
-            for _, rcv in ans:
-                all_hosts.append({"ip": rcv.psrc, "mac": rcv.hwsrc, "network": ip_range})
-        except Exception: continue
-    return json.dumps({"discovered_hosts": all_hosts, "count": len(all_hosts), "scanned_networks": ip_ranges})
+        if is_root:
+            try:
+                ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip_range), timeout=2, verbose=0)
+                for _, rcv in ans:
+                    all_hosts.append({"ip": rcv.psrc, "mac": rcv.hwsrc, "type": "ARP"})
+            except Exception: pass
+        else:
+            # Non-root fallback: Try scanning some IPs (limited to first 20 for speed)
+            print("[!] Not root. Using socket fallback (limited).")
+            net = ipaddress.IPv4Network(ip_range, strict=False)
+            threads = []
+            for ip in list(net.hosts())[:20]:
+                t = threading.Thread(target=socket_check, args=(ip, all_hosts))
+                t.start()
+                threads.append(t)
+            for t in threads: t.join()
+
+    return json.dumps({"discovered_hosts": all_hosts, "count": len(all_hosts), "scanned": ip_ranges})
