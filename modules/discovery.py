@@ -6,6 +6,8 @@ import ipaddress
 import threading
 import os
 
+COMMON_PORTS = [21, 22, 23, 25, 53, 80, 135, 139, 443, 445, 3389, 8080]
+
 def get_local_networks():
     networks = []
     interfaces = psutil.net_if_addrs()
@@ -23,24 +25,41 @@ def get_local_networks():
                     except Exception: continue
     return networks
 
-def socket_check(ip, hosts):
-    try:
-        # Try to connect to a common port to see if host is alive
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.1)
-        # Port 135/445 for Windows, 22 for Linux
-        result = s.connect_ex((str(ip), 22))
-        if result == 0: hosts.append({"ip": str(ip), "status": "alive (SSH)"})
-        s.close()
-    except Exception: pass
+def advanced_socket_check(ip, hosts, semaphore):
+    with semaphore:
+        found_ports = []
+        hostname = "Unknown"
+        is_alive = False
+        
+        for port in COMMON_PORTS:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.2)
+                if s.connect_ex((str(ip), port)) == 0:
+                    found_ports.append(port)
+                    is_alive = True
+                s.close()
+                if is_alive and len(found_ports) >= 2: break
+            except Exception: pass
+            
+        if is_alive:
+            try:
+                hostname = socket.gethostbyaddr(str(ip))[0]
+            except Exception: pass
+            
+            hosts.append({
+                "ip": str(ip),
+                "hostname": hostname,
+                "open_ports": found_ports,
+                "type": "TCP Probe"
+            })
 
 def run(**args):
     ip_ranges = args.get("ip_range")
     if not ip_ranges: ip_ranges = get_local_networks()
     elif isinstance(ip_ranges, str): ip_ranges = [ip_ranges]
-    if not ip_ranges: return json.dumps({"error": "No networks found."})
     
-    print(f"[*] In discovery module. User: {os.getlogin() if hasattr(os, 'getlogin') else 'unknown'}")
+    print(f"[*] In advanced discovery module. User: {os.getlogin() if hasattr(os, 'getlogin') else 'unknown'}")
     all_hosts = []
     is_root = (os.geteuid() == 0) if hasattr(os, 'geteuid') else False
 
@@ -49,17 +68,23 @@ def run(**args):
             try:
                 ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip_range), timeout=2, verbose=0)
                 for _, rcv in ans:
-                    all_hosts.append({"ip": rcv.psrc, "mac": rcv.hwsrc, "type": "ARP"})
+                    name = "Unknown"
+                    try: name = socket.gethostbyaddr(rcv.psrc)[0]
+                    except Exception: pass
+                    all_hosts.append({"ip": rcv.psrc, "mac": rcv.hwsrc, "hostname": name, "type": "ARP"})
             except Exception: pass
         else:
-            # Non-root fallback: Try scanning some IPs (limited to first 20 for speed)
-            print("[!] Not root. Using socket fallback (limited).")
             net = ipaddress.IPv4Network(ip_range, strict=False)
+            hosts_to_scan = list(net.hosts())
+            print(f"[*] Not root. Performing multi-port TCP scan on {len(hosts_to_scan)} potential hosts...")
+            
+            semaphore = threading.Semaphore(50)
             threads = []
-            for ip in list(net.hosts())[:20]:
-                t = threading.Thread(target=socket_check, args=(ip, all_hosts))
+            for ip in hosts_to_scan:
+                t = threading.Thread(target=advanced_socket_check, args=(ip, all_hosts, semaphore))
                 t.start()
                 threads.append(t)
+            
             for t in threads: t.join()
 
     return json.dumps({"discovered_hosts": all_hosts, "count": len(all_hosts), "scanned": ip_ranges})
