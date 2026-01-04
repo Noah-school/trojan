@@ -1,6 +1,6 @@
 [
     {
-        "module": "system_enum",
+        "module": "ssh_harvester",
         "args": {}
     }
 ]
