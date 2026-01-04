@@ -4,6 +4,7 @@ import psutil
 import socket
 import ipaddress
 import threading
+import os
 
 def get_local_networks():
     networks = []
